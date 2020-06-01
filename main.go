@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/docker/docker/api/types"
@@ -25,6 +26,7 @@ const (
 var (
 	knownContainerIDs      map[string]prometheus.Labels
 	knownContainerNetworks map[string]prometheus.Labels
+	knownContainerInfos    map[string]prometheus.Labels
 	knownDataNames         map[string]prometheus.Labels
 
 	pids           *prometheus.GaugeVec
@@ -43,6 +45,8 @@ var (
 	networkReceiveDropped  *prometheus.GaugeVec
 	networkTransmitDropped *prometheus.GaugeVec
 
+	containerInfo *prometheus.GaugeVec
+
 	dataFree       *prometheus.GaugeVec
 	dataAvailable  *prometheus.GaugeVec
 	dataSize       *prometheus.GaugeVec
@@ -51,8 +55,22 @@ var (
 )
 
 func setup() {
-	containerLabels := []string{"container_id", "container_name", "compose_project", "compose_service", "container_image_id", "container_image_name"}
+	containerLabels := []string{"container_name", "compose_project", "compose_service"}
 	containerNetworkLabels := append(containerLabels, "interface")
+	containerInfoLabels := []string{
+		"container_id",
+		"container_name",
+		"compose_project",
+		"compose_service",
+		"container_image_id",
+		"container_image_name",
+		"container_state",
+		"container_state_running",
+		"container_state_paused",
+		"container_state_restarting",
+		"container_state_oomkilled",
+		"container_state_dead",
+	}
 	dataLabels := []string{"data_name"}
 
 	pids = prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -117,6 +135,11 @@ func setup() {
 		Help: "Container network transmit drops",
 	}, containerNetworkLabels)
 
+	containerInfo = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: containerPrefix + "info",
+		Help: "Container info",
+	}, containerInfoLabels)
+
 	dataFree = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: dataPrefix + "free_bytes",
 		Help: "Container data used bytes",
@@ -154,6 +177,8 @@ func setup() {
 	prometheus.MustRegister(networkReceiveDropped)
 	prometheus.MustRegister(networkTransmitDropped)
 
+	prometheus.MustRegister(containerInfo)
+
 	prometheus.MustRegister(dataFree)
 	prometheus.MustRegister(dataAvailable)
 	prometheus.MustRegister(dataSize)
@@ -164,11 +189,17 @@ func setup() {
 func updateContainers(docker *client.Client) {
 	newKnownContainerIDs := make(map[string]prometheus.Labels)
 	newKnownContainerNetworks := make(map[string]prometheus.Labels)
+	newKnownContainerInfos := make(map[string]prometheus.Labels)
 	containers, err := docker.ContainerList(context.Background(), types.ContainerListOptions{})
 	if err != nil {
 		log.Print("Failed to get container list: ", err)
 	}
 	for _, container := range containers {
+		inspect, err := docker.ContainerInspect(context.Background(), container.ID)
+		if err != nil {
+			log.Print("Failed to inspect container: ", err)
+			continue
+		}
 		resp, err := docker.ContainerStatsOneShot(context.Background(), container.ID)
 		if err != nil {
 			log.Print("Failed to get container stats: ", err)
@@ -180,35 +211,35 @@ func updateContainers(docker *client.Client) {
 			log.Print("Failed to parse container stats: ", err)
 			continue
 		}
-		labels := prometheus.Labels{
-			"container_id":         container.ID,
-			"container_name":       strings.TrimPrefix(container.Names[0], "/"),
-			"compose_project":      container.Labels["com.docker.compose.project"],
-			"compose_service":      container.Labels["com.docker.compose.service"],
-			"container_image_id":   strings.TrimPrefix(container.ImageID, "sha256:"),
-			"container_image_name": container.Image,
-		}
 		resp.Body.Close()
-		newKnownContainerIDs[container.ID] = labels
 
-		pids.With(labels).Set(float64(stats.PidsStats.Current))
-		cpuUsageUser.With(labels).Set(float64(stats.CPUStats.CPUUsage.UsageInUsermode) / 1e9)
-		cpuUsageKernel.With(labels).Set(float64(stats.CPUStats.CPUUsage.UsageInKernelmode) / 1e9)
-		cpuUsageTotal.With(labels).Set(float64(stats.CPUStats.CPUUsage.TotalUsage) / 1e9)
-		memoryUsage.With(labels).Set(float64(stats.MemoryStats.Usage - stats.MemoryStats.Stats["cache"]))
-		memoryLimit.With(labels).Set(float64(stats.MemoryStats.Limit))
+		// General data
+		{
+			labels := prometheus.Labels{
+				"container_name":  strings.TrimPrefix(container.Names[0], "/"),
+				"compose_project": container.Labels["com.docker.compose.project"],
+				"compose_service": container.Labels["com.docker.compose.service"],
+			}
+			newKnownContainerIDs[container.ID] = labels
 
+			pids.With(labels).Set(float64(stats.PidsStats.Current))
+			cpuUsageUser.With(labels).Set(float64(stats.CPUStats.CPUUsage.UsageInUsermode) / 1e9)
+			cpuUsageKernel.With(labels).Set(float64(stats.CPUStats.CPUUsage.UsageInKernelmode) / 1e9)
+			cpuUsageTotal.With(labels).Set(float64(stats.CPUStats.CPUUsage.TotalUsage) / 1e9)
+			memoryUsage.With(labels).Set(float64(stats.MemoryStats.Usage - stats.MemoryStats.Stats["cache"]))
+			memoryLimit.With(labels).Set(float64(stats.MemoryStats.Limit))
+		}
+
+		// Networks
 		for intf, net := range stats.Networks {
 			labels := prometheus.Labels{
-				"container_id":         container.ID,
-				"container_name":       strings.TrimPrefix(container.Names[0], "/"),
-				"compose_project":      container.Labels["com.docker.compose.project"],
-				"compose_service":      container.Labels["com.docker.compose.service"],
-				"container_image_id":   strings.TrimPrefix(container.ImageID, "sha256:"),
-				"container_image_name": container.Image,
-				"interface":            intf,
+				"container_name":  strings.TrimPrefix(container.Names[0], "/"),
+				"compose_project": container.Labels["com.docker.compose.project"],
+				"compose_service": container.Labels["com.docker.compose.service"],
+				"interface":       intf,
 			}
 			newKnownContainerNetworks[container.ID+intf] = labels
+
 			networkReceiveBytes.With(labels).Set(float64(net.RxBytes))
 			networkTransmitBytes.With(labels).Set(float64(net.TxBytes))
 			networkReceivePackets.With(labels).Set(float64(net.RxPackets))
@@ -218,7 +249,29 @@ func updateContainers(docker *client.Client) {
 			networkReceiveDropped.With(labels).Set(float64(net.RxDropped))
 			networkTransmitDropped.With(labels).Set(float64(net.TxDropped))
 		}
+
+		// Container info
+		{
+			labels := prometheus.Labels{
+				"container_id":               container.ID,
+				"container_name":             strings.TrimPrefix(container.Names[0], "/"),
+				"compose_project":            container.Labels["com.docker.compose.project"],
+				"compose_service":            container.Labels["com.docker.compose.service"],
+				"container_image_id":         strings.TrimPrefix(container.ImageID, "sha256:"),
+				"container_image_name":       container.Image,
+				"container_state":            container.State,
+				"container_state_running":    strconv.FormatBool(inspect.State.Running),
+				"container_state_paused":     strconv.FormatBool(inspect.State.Paused),
+				"container_state_restarting": strconv.FormatBool(inspect.State.Restarting),
+				"container_state_oomkilled":  strconv.FormatBool(inspect.State.OOMKilled),
+				"container_state_dead":       strconv.FormatBool(inspect.State.Dead),
+			}
+			newKnownContainerInfos[container.ID] = labels
+
+			containerInfo.With(labels).Set(1)
+		}
 	}
+
 	for id, labels := range knownContainerIDs {
 		if newKnownContainerIDs[id] == nil {
 			pids.Delete(labels)
@@ -241,8 +294,14 @@ func updateContainers(docker *client.Client) {
 			networkTransmitDropped.Delete(labels)
 		}
 	}
+	for id, labels := range knownContainerInfos {
+		if newKnownContainerInfos[id] == nil {
+			containerInfo.Delete(labels)
+		}
+	}
 	knownContainerIDs = newKnownContainerIDs
 	knownContainerNetworks = newKnownContainerNetworks
+	knownContainerInfos = newKnownContainerInfos
 }
 
 func updateDatas(basepath string) {
