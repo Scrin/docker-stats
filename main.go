@@ -330,6 +330,7 @@ func updateDatas(basepath string) {
 			continue
 		}
 		labels := prometheus.Labels{"data_name": path}
+		newKnownDataNames[path] = labels
 
 		dataFree.With(labels).Set(float64(fs.Bfree * uint64(fs.Bsize)))
 		dataAvailable.With(labels).Set(float64(fs.Bavail * uint64(fs.Bsize)))
