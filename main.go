@@ -266,7 +266,8 @@ func updateContainers(docker *client.Client) {
 				"container_state_oomkilled":  strconv.FormatBool(inspect.State.OOMKilled),
 				"container_state_dead":       strconv.FormatBool(inspect.State.Dead),
 			}
-			newKnownContainerInfos[container.ID] = labels
+			s, _ := json.Marshal(labels)
+			newKnownContainerInfos[string(s)] = labels
 
 			containerInfo.With(labels).Set(1)
 		}
