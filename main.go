@@ -3,10 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"io/ioutil"
 	"log"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 
@@ -276,29 +274,20 @@ func updateContainers(docker *client.Client) {
 	knownContainerInfos = newKnownContainerInfos
 }
 
-func updateMetrics(docker *client.Client, basepath string) {
+func updateMetrics(docker *client.Client) {
 	for {
 		updateContainers(docker)
 	}
 }
 
 func main() {
-	basepath := "/"
-	if len(os.Args) > 1 {
-		_, err := ioutil.ReadDir(os.Args[1])
-		if err != nil {
-			log.Fatal(err)
-		}
-		basepath = os.Args[1]
-	}
-
 	docker, err := client.NewClientWithOpts(client.FromEnv)
 	if err != nil {
 		panic(err)
 	}
 
 	setup()
-	go updateMetrics(docker, basepath)
+	go updateMetrics(docker)
 
 	http.Handle("/metrics", promhttp.Handler())
 	http.ListenAndServe(":8080", nil)
