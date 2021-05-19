@@ -12,7 +12,6 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
-	"golang.org/x/sys/unix"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -71,7 +70,6 @@ func setup() {
 		"container_state_oomkilled",
 		"container_state_dead",
 	}
-	dataLabels := []string{"data_name"}
 
 	pids = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: containerPrefix + "pids",
@@ -140,27 +138,6 @@ func setup() {
 		Help: "Container info",
 	}, containerInfoLabels)
 
-	dataFree = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: dataPrefix + "free_bytes",
-		Help: "Container data used bytes",
-	}, dataLabels)
-	dataAvailable = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: dataPrefix + "available_bytes",
-		Help: "Container data available bytes",
-	}, dataLabels)
-	dataSize = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: dataPrefix + "size_bytes",
-		Help: "Container data total bytes",
-	}, dataLabels)
-	dataInodesFree = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: dataPrefix + "free_inodes",
-		Help: "Container data free inodes",
-	}, dataLabels)
-	dataInodes = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: dataPrefix + "inodes",
-		Help: "Container data total inodes",
-	}, dataLabels)
-
 	prometheus.MustRegister(pids)
 	prometheus.MustRegister(cpuUsageUser)
 	prometheus.MustRegister(cpuUsageKernel)
@@ -178,12 +155,6 @@ func setup() {
 	prometheus.MustRegister(networkTransmitDropped)
 
 	prometheus.MustRegister(containerInfo)
-
-	prometheus.MustRegister(dataFree)
-	prometheus.MustRegister(dataAvailable)
-	prometheus.MustRegister(dataSize)
-	prometheus.MustRegister(dataInodesFree)
-	prometheus.MustRegister(dataInodes)
 }
 
 func updateContainers(docker *client.Client) {
@@ -305,56 +276,9 @@ func updateContainers(docker *client.Client) {
 	knownContainerInfos = newKnownContainerInfos
 }
 
-func updateDatas(basepath string) {
-	newKnownDataNames := make(map[string]prometheus.Labels)
-	var paths []string
-	if basepath == "/" {
-		paths = append(paths, "/")
-	} else {
-		files, err := ioutil.ReadDir(basepath)
-		if err != nil {
-			log.Print("Failed to get data names: ", err)
-			return
-		}
-		for _, f := range files {
-			if f.IsDir() {
-				paths = append(paths, f.Name())
-			}
-		}
-	}
-
-	for _, path := range paths {
-		fs := unix.Statfs_t{}
-		err := unix.Statfs(basepath+"/"+path, &fs)
-		if err != nil {
-			log.Print("Failed to stat "+basepath+"/"+path+": ", err)
-			continue
-		}
-		labels := prometheus.Labels{"data_name": path}
-		newKnownDataNames[path] = labels
-
-		dataFree.With(labels).Set(float64(fs.Bfree * uint64(fs.Bsize)))
-		dataAvailable.With(labels).Set(float64(fs.Bavail * uint64(fs.Bsize)))
-		dataSize.With(labels).Set(float64(fs.Blocks * uint64(fs.Bsize)))
-		dataInodesFree.With(labels).Set(float64(fs.Ffree))
-		dataInodes.With(labels).Set(float64(fs.Files))
-	}
-	for id, labels := range knownDataNames {
-		if newKnownDataNames[id] == nil {
-			dataFree.Delete(labels)
-			dataAvailable.Delete(labels)
-			dataSize.Delete(labels)
-			dataInodesFree.Delete(labels)
-			dataInodes.Delete(labels)
-		}
-	}
-	knownDataNames = newKnownDataNames
-}
-
 func updateMetrics(docker *client.Client, basepath string) {
 	for {
 		updateContainers(docker)
-		updateDatas(basepath)
 	}
 }
 
