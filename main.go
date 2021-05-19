@@ -21,10 +21,11 @@ const (
 )
 
 var (
-	knownContainerIDs      map[string]prometheus.Labels
-	knownContainerNetworks map[string]prometheus.Labels
-	knownContainerInfos    map[string]prometheus.Labels
-	knownDataNames         map[string]prometheus.Labels
+	knownContainerIDs       map[string]prometheus.Labels
+	knownContainerNetworks  map[string]prometheus.Labels
+	knownContainerDiskStats map[string]prometheus.Labels
+	knownContainerInfos     map[string]prometheus.Labels
+	knownDataNames          map[string]prometheus.Labels
 
 	pids           *prometheus.GaugeVec
 	cpuUsageUser   *prometheus.GaugeVec
@@ -42,18 +43,15 @@ var (
 	networkReceiveDropped  *prometheus.GaugeVec
 	networkTransmitDropped *prometheus.GaugeVec
 
-	containerInfo *prometheus.GaugeVec
+	diskIOBytes *prometheus.GaugeVec
 
-	dataFree       *prometheus.GaugeVec
-	dataAvailable  *prometheus.GaugeVec
-	dataSize       *prometheus.GaugeVec
-	dataInodesFree *prometheus.GaugeVec
-	dataInodes     *prometheus.GaugeVec
+	containerInfo *prometheus.GaugeVec
 )
 
 func setup() {
 	containerLabels := []string{"container_name", "compose_project", "compose_service"}
 	containerNetworkLabels := append(containerLabels, "interface")
+	containerDiskLabels := append(containerLabels, "op")
 	containerInfoLabels := []string{
 		"container_id",
 		"container_name",
@@ -131,6 +129,11 @@ func setup() {
 		Help: "Container network transmit drops",
 	}, containerNetworkLabels)
 
+	diskIOBytes = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: containerPrefix + "disk_io_bytes",
+		Help: "Container disk IO bytes",
+	}, containerDiskLabels)
+
 	containerInfo = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: containerPrefix + "info",
 		Help: "Container info",
@@ -152,12 +155,15 @@ func setup() {
 	prometheus.MustRegister(networkReceiveDropped)
 	prometheus.MustRegister(networkTransmitDropped)
 
+	prometheus.MustRegister(diskIOBytes)
+
 	prometheus.MustRegister(containerInfo)
 }
 
 func updateContainers(docker *client.Client) {
 	newKnownContainerIDs := make(map[string]prometheus.Labels)
 	newKnownContainerNetworks := make(map[string]prometheus.Labels)
+	newKnownContainerDiskStats := make(map[string]prometheus.Labels)
 	newKnownContainerInfos := make(map[string]prometheus.Labels)
 	containers, err := docker.ContainerList(context.Background(), types.ContainerListOptions{})
 	if err != nil {
@@ -219,6 +225,19 @@ func updateContainers(docker *client.Client) {
 			networkTransmitDropped.With(labels).Set(float64(net.TxDropped))
 		}
 
+		// Disk IO
+		for _, stat := range stats.BlkioStats.IoServiceBytesRecursive {
+			labels := prometheus.Labels{
+				"container_name":  strings.TrimPrefix(container.Names[0], "/"),
+				"compose_project": container.Labels["com.docker.compose.project"],
+				"compose_service": container.Labels["com.docker.compose.service"],
+				"op":              stat.Op,
+			}
+			newKnownContainerDiskStats[container.ID+"bytes"+stat.Op] = labels
+
+			diskIOBytes.With(labels).Set(float64(stat.Value))
+		}
+
 		// Container info
 		{
 			labels := prometheus.Labels{
@@ -264,6 +283,11 @@ func updateContainers(docker *client.Client) {
 			networkTransmitDropped.Delete(labels)
 		}
 	}
+	for id, labels := range knownContainerDiskStats {
+		if newKnownContainerDiskStats[id] == nil {
+			diskIOBytes.Delete(labels)
+		}
+	}
 	for id, labels := range knownContainerInfos {
 		if newKnownContainerInfos[id] == nil {
 			containerInfo.Delete(labels)
@@ -274,12 +298,6 @@ func updateContainers(docker *client.Client) {
 	knownContainerInfos = newKnownContainerInfos
 }
 
-func updateMetrics(docker *client.Client) {
-	for {
-		updateContainers(docker)
-	}
-}
-
 func main() {
 	docker, err := client.NewClientWithOpts(client.FromEnv)
 	if err != nil {
@@ -287,7 +305,11 @@ func main() {
 	}
 
 	setup()
-	go updateMetrics(docker)
+	go func() {
+		for {
+			updateContainers(docker)
+		}
+	}()
 
 	http.Handle("/metrics", promhttp.Handler())
 	http.ListenAndServe(":8080", nil)
