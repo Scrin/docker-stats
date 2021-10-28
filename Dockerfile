@@ -1,8 +1,8 @@
-FROM golang:1.14
+FROM golang:1.16
 
-COPY . /go/src/docker-stats/
-RUN go get docker-stats/...
-RUN go install docker-stats
+WORKDIR /go/src/github.com/Scrin/docker-stats/
+COPY . ./
+RUN go install .
 
 ENTRYPOINT ["docker-stats"]
 CMD ["/"]
