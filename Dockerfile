@@ -1,4 +1,4 @@
-FROM golang:1.17
+FROM golang:1.25.7
 
 WORKDIR /go/src/github.com/Scrin/docker-stats/
 COPY . ./

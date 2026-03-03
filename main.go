@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/docker/docker/api/types"
+	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -78,10 +78,6 @@ func setup() {
 	cpuUsageKernel = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: containerPrefix + "cpu_usage_kernel_seconds_total",
 		Help: "Container CPU usage in kernel mode",
-	}, containerLabels)
-	cpuUsageTotal = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: containerPrefix + "cpu_usage_seconds_total",
-		Help: "Container CPU usage",
 	}, containerLabels)
 	cpuUsageTotal = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: containerPrefix + "cpu_usage_seconds_total",
@@ -165,7 +161,7 @@ func updateContainers(docker *client.Client) {
 	newKnownContainerNetworks := make(map[string]prometheus.Labels)
 	newKnownContainerDiskStats := make(map[string]prometheus.Labels)
 	newKnownContainerInfos := make(map[string]prometheus.Labels)
-	containers, err := docker.ContainerList(context.Background(), types.ContainerListOptions{})
+	containers, err := docker.ContainerList(context.Background(), containertypes.ListOptions{})
 	if err != nil {
 		log.Print("Failed to get container list: ", err)
 	}
@@ -180,7 +176,7 @@ func updateContainers(docker *client.Client) {
 			log.Print("Failed to get container stats: ", err)
 			continue
 		}
-		stats := types.StatsJSON{}
+		stats := containertypes.StatsResponse{}
 		err = json.NewDecoder(resp.Body).Decode(&stats)
 		if err != nil {
 			log.Print("Failed to parse container stats: ", err)
