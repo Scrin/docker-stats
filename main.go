@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
@@ -304,6 +305,7 @@ func main() {
 	go func() {
 		for {
 			updateContainers(docker)
+			time.Sleep(10 * time.Second)
 		}
 	}()
 
