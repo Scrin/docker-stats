@@ -66,6 +66,7 @@ func setup() {
 		"container_state_restarting",
 		"container_state_oomkilled",
 		"container_state_dead",
+		"container_restart_policy",
 	}
 
 	pids = prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -162,7 +163,7 @@ func updateContainers(docker *client.Client) {
 	newKnownContainerNetworks := make(map[string]prometheus.Labels)
 	newKnownContainerDiskStats := make(map[string]prometheus.Labels)
 	newKnownContainerInfos := make(map[string]prometheus.Labels)
-	containers, err := docker.ContainerList(context.Background(), containertypes.ListOptions{})
+	containers, err := docker.ContainerList(context.Background(), containertypes.ListOptions{All: true})
 	if err != nil {
 		log.Print("Failed to get container list: ", err)
 	}
@@ -250,6 +251,7 @@ func updateContainers(docker *client.Client) {
 				"container_state_restarting": strconv.FormatBool(inspect.State.Restarting),
 				"container_state_oomkilled":  strconv.FormatBool(inspect.State.OOMKilled),
 				"container_state_dead":       strconv.FormatBool(inspect.State.Dead),
+				"container_restart_policy":   string(inspect.HostConfig.RestartPolicy.Name),
 			}
 			s, _ := json.Marshal(labels)
 			newKnownContainerInfos[string(s)] = labels
