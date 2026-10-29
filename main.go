@@ -193,7 +193,8 @@ func updateContainers(docker *client.Client) {
 				"compose_project": container.Labels["com.docker.compose.project"],
 				"compose_service": container.Labels["com.docker.compose.service"],
 			}
-			newKnownContainerIDs[container.ID] = labels
+			s, _ := json.Marshal(labels)
+			newKnownContainerIDs[string(s)] = labels
 
 			pids.With(labels).Set(float64(stats.PidsStats.Current))
 			cpuUsageUser.With(labels).Set(float64(stats.CPUStats.CPUUsage.UsageInUsermode) / 1e9)
@@ -211,7 +212,8 @@ func updateContainers(docker *client.Client) {
 				"compose_service": container.Labels["com.docker.compose.service"],
 				"interface":       intf,
 			}
-			newKnownContainerNetworks[container.ID+intf] = labels
+			s, _ := json.Marshal(labels)
+			newKnownContainerNetworks[string(s)] = labels
 
 			networkReceiveBytes.With(labels).Set(float64(net.RxBytes))
 			networkTransmitBytes.With(labels).Set(float64(net.TxBytes))
@@ -231,7 +233,8 @@ func updateContainers(docker *client.Client) {
 				"compose_service": container.Labels["com.docker.compose.service"],
 				"op":              stat.Op,
 			}
-			newKnownContainerDiskStats[container.ID+"bytes"+stat.Op] = labels
+			s, _ := json.Marshal(labels)
+			newKnownContainerDiskStats[string(s)] = labels
 
 			diskIOBytes.With(labels).Set(float64(stat.Value))
 		}
@@ -294,6 +297,7 @@ func updateContainers(docker *client.Client) {
 	}
 	knownContainerIDs = newKnownContainerIDs
 	knownContainerNetworks = newKnownContainerNetworks
+	knownContainerDiskStats = newKnownContainerDiskStats
 	knownContainerInfos = newKnownContainerInfos
 }
 
